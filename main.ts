@@ -1,68 +1,63 @@
-// make.fun entry: "Make the Judge Laugh in One Line"
-// A single pun about a suitcase and emotional baggage. The joke lands
-// on the last two words, so the line is kept whole and untrimmed.
-import { mkdir, writeFile, readFile } from "node:fs/promises";
-import { join } from "node:path";
+// One-line joke for make.fun: "Make the Judge Laugh in One Line".
+// The gag is a suitcase pun: the vacation is cancelled, so the only
+// luggage left is the emotional kind. Keep the sentence intact.
+import { mkdir, writeFile, readFile, stat } from "node:fs/promises";
+import { resolve } from "node:path";
 import { createHash } from "node:crypto";
 
-// Submission limits for this bounty (see RULES.txt): one funny line,
-// 1-200 UTF-8 characters, no padding-only content.
-const ENTRY_RULES = Object.freeze({
-  minChars: 1,
-  maxChars: 200,
-  outFile: "entry.txt",
+// Hard limits the bounty imposes on the single submitted line.
+const LIMITS = Object.freeze({
+  floor: 1,
+  ceiling: 200,
+  fileName: "entry.txt",
+  fallbackDir: "/output",
 });
 
-// The joke itself: setup in the first sentence, punchline in the second.
-const JOKE_PARTS = Object.freeze({
-  setup: "I told my suitcase there would be no vacation this year.",
-  punchline: "Now I'm dealing with emotional baggage.",
-});
+// The full joke as one string, exactly as it will be judged.
+const JOKE = "I told my suitcase there would be no vacation this year. Now I'm dealing with emotional baggage.";
 
-function assembleJoke(parts: typeof JOKE_PARTS): string {
-  return `${parts.setup} ${parts.punchline}`;
+// Work out where the entry file has to land.
+function resolvePaths(): { dir: string; file: string } {
+  const dir = process.env.MAKEFUN_OUTPUT_DIR ?? LIMITS.fallbackDir;
+  return { dir, file: resolve(dir, LIMITS.fileName) };
 }
 
-function validate(entry: string): void {
-  const chars = [...entry];
-  if (chars.length < ENTRY_RULES.minChars) {
-    throw new Error("entry is empty");
+// Short fingerprint so the run log proves which text was handed in.
+function fingerprint(text: string): string {
+  return createHash("sha256").update(text, "utf8").digest("hex").slice(0, 16);
+}
+
+// The bounty wants one funny line, 1-200 chars, no filler. The pun
+// only works if both halves survive, so check the whole line at once.
+function checkJoke(line: string): void {
+  const count = Array.from(line).length;
+  if (count < LIMITS.floor) throw new Error("joke is empty");
+  if (count > LIMITS.ceiling) {
+    throw new Error(`joke is ${count} chars, over the ${LIMITS.ceiling} limit`);
   }
-  if (chars.length > ENTRY_RULES.maxChars) {
-    throw new Error(`entry is ${chars.length} chars, over the 200 limit`);
-  }
-  if (entry.trim().length === 0) {
-    throw new Error("entry is only whitespace");
-  }
-  if (/\r|\n/.test(entry)) {
-    throw new Error("entry must be a single line");
-  }
-  if (/[\u0000-\u001f]/.test(entry)) {
-    throw new Error("entry must not contain control characters");
+  if (line !== line.trim()) throw new Error("joke has stray leading/trailing space");
+  if (/[\r\n]/.test(line)) throw new Error("joke must stay on one line");
+  if (/[\u0000-\u001f]/.test(line)) throw new Error("joke must not contain control characters");
+  if (!line.includes("suitcase") || !line.includes("emotional baggage")) {
+    throw new Error("joke lost its setup or its punchline");
   }
 }
 
-function digest(text: string): string {
-  return createHash("sha256").update(text, "utf8").digest("hex").slice(0, 12);
-}
-
-async function resolveOutDir(): Promise<string> {
-  return process.env.MAKEFUN_OUTPUT_DIR ?? "/output";
-}
-
-async function handIn(): Promise<void> {
-  const entry = assembleJoke(JOKE_PARTS);
-  validate(entry);
-  const outDir = await resolveOutDir();
-  await mkdir(outDir, { recursive: true });
-  const target = join(outDir, ENTRY_RULES.outFile);
-  await writeFile(target, entry, "utf8");
-  // Round-trip: prove the file holds exactly what we validated.
-  const back = await readFile(target, "utf8");
-  if (back !== entry) {
-    throw new Error("round-trip mismatch in entry.txt");
+// Write the line, then read it back and compare byte for byte.
+async function publish(line: string): Promise<void> {
+  checkJoke(line);
+  const { dir, file } = resolvePaths();
+  await mkdir(dir, { recursive: true });
+  await writeFile(file, line, "utf8");
+  const info = await stat(file);
+  if (info.size !== Buffer.byteLength(line, "utf8")) {
+    throw new Error("entry.txt size does not match the joke");
   }
-  console.log(`wrote ${[...entry].length} chars to ${target} (sha ${digest(entry)})`);
+  const back = await readFile(file, "utf8");
+  if (back !== line) throw new Error("entry.txt differs from the joke");
+  console.log(
+    `delivered ${Array.from(line).length} chars to ${file} (sha256 ${fingerprint(line)})`,
+  );
 }
 
-await handIn();
+await publish(JOKE);
